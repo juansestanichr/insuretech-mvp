@@ -1,5 +1,9 @@
-from fastapi import FastAPI, Depends, HTTPException
+from pathlib import Path
+
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+
 from .storage import init_db
 from .agents.observability import ObservabilityAgent
 from .agents.orchestrator import DecisionOrchestrator
@@ -19,13 +23,38 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+INDEX_HTML = (Path(__file__).parent / "templates" / "index.html").read_text(encoding="utf-8")
+
 init_db()
 
+
+@app.on_event("startup")
+def _startup():
+    init_db()
+    obs = ObservabilityAgent()
+    app.state.obs_agent = obs
+    app.state.orchestrator = DecisionOrchestrator(obs)
+
+
 def get_obs():
-    return ObservabilityAgent()
+    obs = getattr(app.state, "obs_agent", None)
+    if obs is None:
+        obs = ObservabilityAgent()
+        app.state.obs_agent = obs
+    return obs
+
 
 def get_orchestrator(obs=Depends(get_obs)):
-    return DecisionOrchestrator(obs)
+    orch = getattr(app.state, "orchestrator", None)
+    if orch is None:
+        orch = DecisionOrchestrator(obs)
+        app.state.orchestrator = orch
+    return orch
+
+
+@app.get("/", response_class=HTMLResponse)
+def index():
+    return HTMLResponse(INDEX_HTML)
 
 @app.get("/health")
 def health():

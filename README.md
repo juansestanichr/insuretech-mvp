@@ -18,14 +18,15 @@ This repository contains a **minimum viable product** for a fully digital insure
 python -m venv .venv && source .venv/bin/activate  # on Windows: .venv\Scripts\activate
 pip install -r backend/requirements.txt
 
-# 2) Run API
+# 2) Run API + UI
 uvicorn app.main:app --reload --port 8000 --app-dir backend
 
 # 3) Try it
+# Visit the all-in-one control panel at http://127.0.0.1:8000/
 curl -X POST http://127.0.0.1:8000/quote -H "Content-Type: application/json" -d '{"customer_id":"c1","age":30,"vehicle_value":15000,"prior_claims":0,"credit_score":680,"gender":"F"}'
 ```
 
-Open **http://127.0.0.1:8000/docs** for interactive API.
+Open **http://127.0.0.1:8000/** for the new UI or **http://127.0.0.1:8000/docs** for the interactive API.
 
 ---
 
@@ -34,6 +35,18 @@ Open **http://127.0.0.1:8000/docs** for interactive API.
 ```bash
 docker compose up --build
 ```
+
+---
+
+## Web control panel
+
+The FastAPI app now serves a lightweight single-page control panel at `/`. It lets you:
+
+- Run quotes and underwriting decisions without leaving the browser.
+- Summarise claims and chat with the virtual assistant.
+- Trigger fraud scoring, refresh observability logs and check API health.
+
+All interactions call the same backend endpoints, so you can observe the resulting traces in the `/logs` view or through the API.
 
 ---
 
