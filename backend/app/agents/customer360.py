@@ -15,5 +15,6 @@ class Customer360Agent:
     def get(self, customer_id: str):
         with SessionLocal() as s:
             db = s.query(DBCustomer).filter_by(customer_id=customer_id).one_or_none()
-            if not db: return None
+            if not db:
+                return None
             return {"customer_id": db.customer_id, "name": db.name, "email": db.email, "phone": db.phone}

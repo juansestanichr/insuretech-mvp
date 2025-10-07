@@ -9,29 +9,21 @@ from fastapi.responses import HTMLResponse
 from .agents.chatbot import ChatbotAgent
 from .agents.claims import ClaimsAgent
 from .agents.customer360 import Customer360Agent
-from .agents.external_data import ExternalDataAgent
-from .agents.fraud import FraudAgent
-from .agents.observability import ObservabilityAgent
-from .agents.orchestrator import DecisionOrchestrator
+from .agents.marketing import MarketingAgent
 from .models import (
-    ChatRequest,
-    ChatResponse,
-    ClaimReport,
-    ClaimResponse,
     QuoteRequest,
     QuoteResponse,
     UnderwriteRequest,
     UnderwriteResponse,
+    ClaimReport,
+    ClaimResponse,
+    ChatRequest,
+    ChatResponse,
+    CustomerPayload,
+    CustomerResponse,
+    MarketingRequest,
+    MarketingResponse,
 )
-from .storage import init_db
-
-AgentT = TypeVar("AgentT")
-
-INDEX_HTML_PATH = Path(__file__).parent / "templates" / "index.html"
-try:
-    INDEX_HTML = INDEX_HTML_PATH.read_text(encoding="utf-8")
-except FileNotFoundError:  # pragma: no cover - defensive fallback for packaged deployments
-    INDEX_HTML = "<!doctype html><title>Insuretech MVP</title><h1>UI assets missing</h1>"
 
 
 @asynccontextmanager
@@ -90,6 +82,9 @@ def index():
     return HTMLResponse(INDEX_HTML)
 
 
+def get_customer360():
+    return Customer360Agent()
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -136,8 +131,40 @@ async def fx(base: str = "USD"):
     return await agent.get_fx(base)
 
 
-@app.post("/customers/upsert")
-def upsert_customer(customer_id: str, name: str, email: str, phone: str | None = None):
-    agent = _get_cached_agent("customer360", Customer360Agent)
-    agent.upsert(customer_id, name, email, phone)
-    return {"ok": True}
+@app.post("/customers", response_model=CustomerResponse)
+def upsert_customer(
+    payload: CustomerPayload,
+    c360: Customer360Agent = Depends(get_customer360),
+    obs: ObservabilityAgent = Depends(get_obs),
+):
+    c360.upsert(payload.customer_id, payload.name, payload.email, payload.phone)
+    obs.log("customer360", "upsert", payload.model_dump())
+    stored = c360.get(payload.customer_id)
+    if not stored:
+        raise HTTPException(status_code=500, detail="Customer record not stored")
+    return stored
+
+
+@app.get("/customers/{customer_id}", response_model=CustomerResponse)
+def get_customer(customer_id: str, c360: Customer360Agent = Depends(get_customer360)):
+    record = c360.get(customer_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return record
+
+
+@app.post("/marketing/outreach", response_model=MarketingResponse)
+def marketing_outreach(
+    payload: MarketingRequest,
+    c360: Customer360Agent = Depends(get_customer360),
+    obs: ObservabilityAgent = Depends(get_obs),
+):
+    customer = c360.get(payload.customer_id)
+    name = customer["name"] if customer else payload.customer_id
+    message = MarketingAgent().craft_outreach(name, payload.product)
+    obs.log(
+        "marketing",
+        "outreach_generated",
+        {"customer_id": payload.customer_id, "product": payload.product, "has_profile": bool(customer)},
+    )
+    return {"message": message}
