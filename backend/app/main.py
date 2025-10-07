@@ -1,12 +1,13 @@
-from fastapi import FastAPI, Depends, HTTPException
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Callable, MutableMapping, TypeVar, cast
+
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .storage import init_db
-from .agents.observability import ObservabilityAgent
-from .agents.orchestrator import DecisionOrchestrator
-from .agents.claims import ClaimsAgent
+from fastapi.responses import HTMLResponse
+
 from .agents.chatbot import ChatbotAgent
-from .agents.fraud import FraudAgent
-from .agents.external_data import ExternalDataAgent
+from .agents.claims import ClaimsAgent
 from .agents.customer360 import Customer360Agent
 from .agents.marketing import MarketingAgent
 from .models import (
@@ -24,7 +25,25 @@ from .models import (
     MarketingResponse,
 )
 
-app = FastAPI(title="Insuretech MVP API", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    obs_agent = ObservabilityAgent()
+    app.state.obs_agent = obs_agent
+    app.state.orchestrator = DecisionOrchestrator(obs_agent)
+    app.state.agent_cache = {}
+    try:
+        yield
+    finally:
+        cache = getattr(app.state, "agent_cache", None)
+        if isinstance(cache, MutableMapping):
+            cache.clear()
+        app.state.obs_agent = None
+        app.state.orchestrator = None
+
+
+app = FastAPI(title="Insuretech MVP API", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -33,13 +52,35 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-init_db()
+
+def _get_cached_agent(name: str, factory: Callable[[], AgentT]) -> AgentT:
+    cache: MutableMapping[str, object] = getattr(app.state, "agent_cache", {})
+    if name not in cache:
+        cache[name] = factory()
+        app.state.agent_cache = cache
+    return cast(AgentT, cache[name])
+
 
 def get_obs():
-    return ObservabilityAgent()
+    obs = getattr(app.state, "obs_agent", None)
+    if obs is None:
+        obs = ObservabilityAgent()
+        app.state.obs_agent = obs
+    return obs
+
 
 def get_orchestrator(obs=Depends(get_obs)):
-    return DecisionOrchestrator(obs)
+    orchestrator = getattr(app.state, "orchestrator", None)
+    if orchestrator is None:
+        orchestrator = DecisionOrchestrator(obs)
+        app.state.orchestrator = orchestrator
+    return orchestrator
+
+
+@app.get("/", response_class=HTMLResponse)
+def index():
+    return HTMLResponse(INDEX_HTML)
+
 
 def get_customer360():
     return Customer360Agent()
@@ -48,36 +89,47 @@ def get_customer360():
 def health():
     return {"status": "ok"}
 
+
 @app.post("/quote", response_model=QuoteResponse)
 def quote(req: QuoteRequest, orch: DecisionOrchestrator = Depends(get_orchestrator)):
-    out = orch.quote(req.model_dump())
-    return out
+    return orch.quote(req.model_dump())
+
 
 @app.post("/underwrite", response_model=UnderwriteResponse)
 def underwrite(req: UnderwriteRequest, orch: DecisionOrchestrator = Depends(get_orchestrator)):
     return orch.underwrite(req.model_dump())
 
+
 @app.post("/claims", response_model=ClaimResponse)
 def claims(req: ClaimReport):
-    summary, complexity = ClaimsAgent().summarize(req.description)
+    agent = _get_cached_agent("claims", ClaimsAgent)
+    summary, complexity = agent.summarize(req.description)
     return {"summary": summary, "complexity": complexity}
+
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
-    return {"response": ChatbotAgent().reply(req.message)}
+    agent = _get_cached_agent("chatbot", ChatbotAgent)
+    return {"response": agent.reply(req.message)}
+
 
 @app.get("/fraud/score")
 def fraud_score(amount: float):
-    score = FraudAgent().score_claim(amount)
+    agent = _get_cached_agent("fraud", FraudAgent)
+    score = agent.score_claim(amount)
     return {"amount": amount, "fraud_risk": score}
+
 
 @app.get("/logs")
 def logs(obs: ObservabilityAgent = Depends(get_obs), limit: int = 50):
     return obs.list(limit=limit)
 
+
 @app.get("/fx")
 async def fx(base: str = "USD"):
-    return await ExternalDataAgent().get_fx(base)
+    agent = _get_cached_agent("external_data", ExternalDataAgent)
+    return await agent.get_fx(base)
+
 
 @app.post("/customers", response_model=CustomerResponse)
 def upsert_customer(
