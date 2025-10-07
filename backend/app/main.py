@@ -2,14 +2,10 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Callable, MutableMapping, TypeVar, cast
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
-from .agents.chatbot import ChatbotAgent
-from .agents.claims import ClaimsAgent
-from .agents.customer360 import Customer360Agent
-from .agents.marketing import MarketingAgent
 from .models import (
     QuoteRequest,
     QuoteResponse,
@@ -24,6 +20,29 @@ from .models import (
     MarketingRequest,
     MarketingResponse,
 )
+
+from .agents.chatbot import ChatbotAgent
+from .agents.claims import ClaimsAgent
+from .agents.customer360 import Customer360Agent
+from .agents.marketing import MarketingAgent
+from .agents.fraud import FraudAgent
+from .agents.external_data import ExternalDataAgent
+from .agents.observability import ObservabilityAgent
+from .agents.orchestrator import DecisionOrchestrator
+from .storage import init_db
+
+AgentT = TypeVar("AgentT", bound=object)
+
+_TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+try:
+    INDEX_HTML = (_TEMPLATES_DIR / "index.html").read_text(encoding="utf-8")
+except FileNotFoundError:
+    INDEX_HTML = "<h1>Insuretech MVP API</h1>"
+
+
+# Ensure database tables exist even when the ASGI lifespan is not triggered
+# (for example in certain test runners).
+init_db()
 
 
 @asynccontextmanager
