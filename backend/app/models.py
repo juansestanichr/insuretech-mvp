@@ -47,8 +47,28 @@ class LogRecord(BaseModel):
     action: str
     payload: dict
 
-class Customer(BaseModel):
+class CustomerPayload(BaseModel):
     customer_id: str
     name: str
     email: str
     phone: str | None = None
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        if "@" not in value or value.startswith("@") or value.endswith("@"):
+            raise ValueError("Email must contain a username and domain")
+        return value.lower()
+
+
+class CustomerResponse(CustomerPayload):
+    pass
+
+
+class MarketingRequest(BaseModel):
+    customer_id: str
+    product: str
+
+
+class MarketingResponse(BaseModel):
+    message: str
